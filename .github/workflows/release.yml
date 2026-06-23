@@ -1,0 +1,96 @@
+name: Build release executables
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build and publish Windows exe files
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install WinFsp
+        shell: pwsh
+        run: |
+          choco install winfsp -y --no-progress
+          $winfsp = $null
+          foreach ($key in @('HKLM:\SOFTWARE\WOW6432Node\WinFsp', 'HKLM:\SOFTWARE\WinFsp')) {
+            if (Test-Path $key) {
+              $winfsp = Get-ItemProperty -Path $key
+              break
+            }
+          }
+          if (-not $winfsp) {
+            throw 'WinFsp registry key was not found after installation.'
+          }
+          "WINFSP_LIBRARY_PATH=$($winfsp.InstallDir)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e .
+          python -m pip install pyinstaller nuitka ordered-set zstandard
+
+      - name: Build with PyInstaller
+        shell: pwsh
+        run: |
+          python -m PyInstaller `
+            --clean `
+            --onefile `
+            --name hashfsp-pyinstaller `
+            --collect-all winfspy `
+            --collect-all impacket `
+            --hidden-import winfspy.plumbing._bindings `
+            src\hashfsp\__main__.py
+
+      - name: Build with Nuitka
+        shell: pwsh
+        run: |
+          python -m nuitka `
+            --standalone `
+            --onefile `
+            --assume-yes-for-downloads `
+            --include-package=hashfsp `
+            --include-package=winfspy `
+            --include-package=impacket `
+            --include-module=winfspy.plumbing._bindings `
+            --output-dir=dist\nuitka `
+            --output-filename=hashfsp-nuitka.exe `
+            src\hashfsp\__main__.py
+
+      - name: Stage release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item -LiteralPath dist\hashfsp-pyinstaller.exe -Destination "release\hashfsp-${{ inputs.version }}-pyinstaller.exe"
+          Copy-Item -LiteralPath dist\nuitka\hashfsp-nuitka.exe -Destination "release\hashfsp-${{ inputs.version }}-nuitka.exe"
+          Get-ChildItem release
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: HashFSP v${{ inputs.version }}
+          body: |
+            Built from commit ${{ github.sha }}.
+
+            The executables still require WinFsp to be installed on the target Windows host.
+          files: release/*.exe
+          fail_on_unmatched_files: true
