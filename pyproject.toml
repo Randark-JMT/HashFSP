@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hashfsp"
+version = "0.1.0"
+description = "WinFsp SMB share mounter using NTLM hash authentication for authorized lab use."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "impacket>=0.12.0",
+    "rich>=13.7.0",
+    "typer>=0.12.3",
+    "winfspy @ git+https://github.com/Scille/winfspy.git@master",
+]
+
+[project.scripts]
+hashfsp = "hashfsp.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
