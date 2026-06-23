@@ -7,6 +7,16 @@ on:
         description: Release version, for example 0.1.0
         required: true
         type: string
+      build_pyinstaller:
+        description: Build PyInstaller exe
+        required: true
+        type: boolean
+        default: true
+      build_nuitka:
+        description: Build Nuitka exe, slower
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -24,6 +34,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+
+      - name: Validate selected builders
+        if: ${{ !inputs.build_pyinstaller && !inputs.build_nuitka }}
+        shell: pwsh
+        run: |
+          throw 'Select at least one builder: PyInstaller or Nuitka.'
 
       - name: Install WinFsp
         shell: pwsh
@@ -46,9 +62,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -e .
-          python -m pip install pyinstaller nuitka ordered-set zstandard
+
+      - name: Install PyInstaller
+        if: ${{ inputs.build_pyinstaller }}
+        shell: pwsh
+        run: |
+          python -m pip install pyinstaller
+
+      - name: Install Nuitka
+        if: ${{ inputs.build_nuitka }}
+        shell: pwsh
+        run: |
+          python -m pip install nuitka ordered-set zstandard
 
       - name: Build with PyInstaller
+        if: ${{ inputs.build_pyinstaller }}
         shell: pwsh
         run: |
           python -m PyInstaller `
@@ -61,6 +89,7 @@ jobs:
             src\hashfsp\__main__.py
 
       - name: Build with Nuitka
+        if: ${{ inputs.build_nuitka }}
         shell: pwsh
         run: |
           python -m nuitka `
@@ -79,8 +108,15 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Copy-Item -LiteralPath dist\hashfsp-pyinstaller.exe -Destination "release\hashfsp-${{ inputs.version }}-pyinstaller.exe"
-          Copy-Item -LiteralPath dist\nuitka\hashfsp-nuitka.exe -Destination "release\hashfsp-${{ inputs.version }}-nuitka.exe"
+          if (Test-Path -LiteralPath dist\hashfsp-pyinstaller.exe) {
+            Copy-Item -LiteralPath dist\hashfsp-pyinstaller.exe -Destination "release\hashfsp-${{ inputs.version }}-pyinstaller.exe"
+          }
+          if (Test-Path -LiteralPath dist\nuitka\hashfsp-nuitka.exe) {
+            Copy-Item -LiteralPath dist\nuitka\hashfsp-nuitka.exe -Destination "release\hashfsp-${{ inputs.version }}-nuitka.exe"
+          }
+          if (-not (Get-ChildItem -Path release -Filter *.exe)) {
+            throw 'No release executables were staged.'
+          }
           Get-ChildItem release
 
       - name: Publish GitHub Release
@@ -90,6 +126,10 @@ jobs:
           name: HashFSP v${{ inputs.version }}
           body: |
             Built from commit ${{ github.sha }}.
+
+            Builders:
+            - PyInstaller: ${{ inputs.build_pyinstaller }}
+            - Nuitka: ${{ inputs.build_nuitka }}
 
             The executables still require WinFsp to be installed on the target Windows host.
           files: release/*.exe
